@@ -1,0 +1,166 @@
+Here is a **step-by-step** guide to setting up a **Kubernetes cluster** on AWS EC2 instances (one master node, one worker node) using `kubeadm`:
+
+---
+
+## **Step 1: Set Up EC2 Instances**
+1. **Launch two EC2 instances** with:
+   - OS: **Ubuntu 22.04**
+   - Instance Type: **t2.medium** (recommended)
+   - Name: `master-node` & `worker-node`
+   - Storage: At least **20GB**
+   - Security Group: Create a new one with the following rules:
+
+| **Port** | **Protocol** | **Source** | **Purpose** |
+|----------|------------|-----------|------------|
+| 22       | TCP        | 0.0.0.0/0 | SSH Access |
+| 6443     | TCP        | 0.0.0.0/0 | Kubernetes API |
+| 10250    | TCP        | 0.0.0.0/0 | Kubelet API |
+| 30000-32767 | TCP    | 0.0.0.0/0 | NodePort Services |
+
+2. **Select the security group** when launching both instances.
+
+---
+
+## **Step 2: Set Up Kubernetes on Master & Worker Nodes**
+SSH into both instances and execute the following commands:
+
+### **Disable Swap (Required for Kubernetes)**
+```bash
+sudo swapoff -a
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+```
+
+### **Enable Required Kernel Modules**
+```bash
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+```
+
+### **Configure Sysctl Parameters**
+```bash
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+sudo sysctl --system
+```
+
+---
+
+## **Step 3: Install Containerd (Container Runtime)**
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y containerd.io
+
+containerd config default | sed -e 's/SystemdCgroup = false/SystemdCgroup = true/' -e 's/sandbox_image = "registry.k8s.io\/pause:3.6"/sandbox_image = "registry.k8s.io\/pause:3.9"/' | sudo tee /etc/containerd/config.toml
+
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+sudo systemctl status containerd
+```
+
+---
+
+## **Step 4: Install Kubernetes Components**
+```bash
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo apt-mark hold kubelet kubeadm kubectl
+```
+
+---
+
+## **Step 5: Initialize Kubernetes Cluster (On Master Node)**
+```bash
+sudo kubeadm init
+```
+
+After successful initialization, you will see a **join command** (save this for later).
+
+---
+
+## **Step 6: Configure kubectl on Master Node**
+```bash
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Check if the cluster is running:
+```bash
+kubectl get nodes
+```
+
+---
+
+## **Step 7: Install Network Plugin (Calico)**
+```bash
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.0/manifests/calico.yaml
+```
+
+Wait a few seconds and verify:
+```bash
+kubectl get pods -n kube-system
+```
+
+---
+
+## **Step 8: Join Worker Node to Cluster**
+### **Get the Join Command from Master Node**
+```bash
+kubeadm token create --print-join-command
+```
+
+It will return a command like:
+```bash
+sudo kubeadm join <master-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+```
+### **Run This Command on Worker Node**
+On the **worker node**, execute the **join command** obtained from the master.
+
+Example:
+```bash
+sudo kubeadm join 192.168.1.100:6443 --token abcdef.0123456789abcdef --discovery-token-ca-cert-hash sha256:xyz
+```
+
+---
+
+## **Step 9: Verify Cluster Status**
+On the master node, check if the worker node has joined:
+```bash
+kubectl get nodes
+```
+
+If everything is working, you should see:
+```
+NAME           STATUS   ROLES           AGE     VERSION
+master-node    Ready    control-plane   10m     v1.29.0
+worker-node    Ready    <none>          5m      v1.29.0
+```
+
+---
+
+### **Congratulations! 🎉 You Have Successfully Set Up a Kubernetes Cluster on AWS EC2.**
+Now, you can deploy applications on your cluster. 🚀 Let me know if you need help!

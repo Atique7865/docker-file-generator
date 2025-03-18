@@ -1,0 +1,28 @@
+import ollama
+
+PROMPT = """
+ONLY Generate an ideal multi-stage Dockerfile for {language} with best practices. Do not provide any description.
+Include:
+- First stage: Build stage
+  - Use a base image for building (e.g., build tools or language-specific image)
+  - Install dependencies for building the application
+  - Set the working directory for the build stage
+  - Add the source code for building
+  - Build the application
+- Second stage: Runtime stage
+  - Use a lightweight base image (e.g., for running the app)
+  - Copy the built application from the first stage
+  - Set the working directory for the runtime
+  - Expose necessary ports
+  - Run the application
+"""
+
+def generate_dockerfile(language):
+    response = ollama.chat(model='llama3.2:1b', messages=[{'role': 'user', 'content': PROMPT.format(language=language)}])
+    return response['message']['content']
+
+if __name__ == '__main__':
+    language = input("Enter the programming language: ")
+    dockerfile = generate_dockerfile(language)
+    print("\nGenerated Multi-Stage Dockerfile:\n")
+    print(dockerfile)
